@@ -1,0 +1,10 @@
+add_noise:
+  mean: 0.15     
+  var: 0.10   
+
+add_camera_noise:
+  shot_noise_scale: 0.02 
+  read_noise_var: 0.005 
+
+make_old:
+  intensity: 0.7 
