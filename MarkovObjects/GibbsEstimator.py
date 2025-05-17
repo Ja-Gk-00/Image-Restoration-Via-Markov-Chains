@@ -1,7 +1,7 @@
 import numpy as np
 from abc import ABC, abstractmethod
 from sklearn.decomposition import PCA
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import numba
 
 class LossFunction(ABC):
@@ -38,6 +38,29 @@ class SparseGradientPrior(PriorFunction):
     def prior(self, y, neighbors):
         grads = (neighbors - y) / (neighbors + self.eps)
         return np.sum(np.abs(grads) ** self.p)
+    
+class PottsPrior(PriorFunction):
+    def __init__(self, beta_prior=1.0):
+        self.beta_prior = beta_prior
+
+    def prior(self, y_sample, neighbors_of_y_sample):
+        if neighbors_of_y_sample.size == 0:
+            return 0.0
+        return self.beta_prior * np.sum(neighbors_of_y_sample != y_sample)
+    
+    
+class TruncatedQuadraticPrior(PriorFunction):
+    def __init__(self, beta_prior=1.0, lambda_sq_penalty=1.0, alpha_threshold=100.0):
+        self.beta_prior = beta_prior
+        self.lambda_sq_penalty = lambda_sq_penalty
+        self.alpha_threshold = alpha_threshold
+
+    def prior(self, y_sample, neighbors_of_y_sample):
+        if neighbors_of_y_sample.size == 0:
+            return 0.0
+        squared_diffs = self.lambda_sq_penalty * (neighbors_of_y_sample - y_sample)**2
+        truncated_penalties = np.minimum(squared_diffs, self.alpha_threshold)
+        return self.beta_prior * np.sum(truncated_penalties)
 
 class WindowPatternTerm:
     def __init__(self, X, window_size=3, n_components=5):
@@ -112,7 +135,7 @@ class GridMRF:
         )
 
 @numba.njit
-def _sample_neigh(y_old, neigh, x_obs, lambda_r, beta):
+def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta):
     vmin = np.min(neigh)
     vmax = np.max(neigh)
     cand = np.arange(vmin, vmax + 1)
@@ -132,18 +155,44 @@ def _sample_neigh(y_old, neigh, x_obs, lambda_r, beta):
             return cand[idx]
     return cand[-1]
 
+@numba.njit
+def _sample_neigh_potts(y_old, neigh, x_obs, lambda_r, beta):
+    vmin = np.min(neigh)
+    vmax = np.max(neigh)
+    cand = np.arange(vmin, vmax + 1)
+    m = cand.shape[0]
+    energies = np.empty(m)
+    for idx in range(m):
+        v = cand[idx]
+        energies[idx] = lambda_r*(v - x_obs)**2 + beta*np.sum((neigh != v).astype(np.float32))
+    e0 = energies.min()
+    probs = np.exp(-(energies - e0))
+    probs /= probs.sum()
+    r = np.random.rand()
+    cum = 0.0
+    for idx in range(m):
+        cum += probs[idx]
+        if r < cum:
+            return cand[idx]
+    return cand[-1]
+
 class GibbsSampler:
     def __init__(self, mrf, num_iter=1000, burn_in=200,
-                 verbose=False, beta=1.0, estimate_mode='mean'):
+                 verbose=False, betas=1.0, estimate_mode='mean', pior_type_for_optimal='quadratic'):
         self.mrf = mrf
         self.num_iter = num_iter
         self.burn_in = burn_in
         self.verbose = verbose
-        self.beta = beta
+        if type(betas) in (int, float):
+            betas = [betas] * self.num_iter
+        if len(betas) != self.num_iter:
+            raise ValueError("betas must be a scalar or a list of length C")
+        self.betas = betas
         self.estimate_mode = estimate_mode
         self.denoised_ = None
         self.last_sample_ = None
         self.history = {'iter': [], 'loss': [], 'energy': []}
+        self.pior_type_for_optimal = pior_type_for_optimal
 
     def fit(self, shuffle_pixels=False, parallel_channels=False):
     
@@ -240,8 +289,14 @@ class GibbsSampler:
                 if shuffle_pixels: np.random.shuffle(coords)
                 for i,j in coords:
                     neigh = mrf_c._neighbors(Yc[...,None],i,j,0)
-                    Yc[i,j] = _sample_neigh(Yc[i,j], neigh, mrf_c.X[i,j,0],
-                                              mrf_c.lambda_r, self.beta)
+                    if self.pior_type_for_optimal == 'quadratic':
+                        Yc[i,j] = _sample_neigh_quadratic(Yc[i,j], neigh, mrf_c.X[i,j,0],
+                                                mrf_c.lambda_r, self.betas[t-1])
+                    elif self.pior_type_for_optimal == 'potts':
+                        Yc[i,j] = _sample_neigh_potts(Yc[i,j], neigh, mrf_c.X[i,j,0],
+                                                mrf_c.lambda_r, self.betas[t-1])
+                    else:
+                        raise ValueError(f"Unknown prior type: {self.pior_type_for_optimal}")
                 
                 last_sample_ = Yc.copy()
                 if t > self.burn_in:
