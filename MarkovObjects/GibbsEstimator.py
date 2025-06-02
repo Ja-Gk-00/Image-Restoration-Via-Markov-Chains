@@ -135,7 +135,7 @@ class GridMRF:
         )
 
 @numba.njit
-def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta):
+def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta_prior, beta_t, alpha=99999.0):
     vmin = np.min(neigh)
     vmax = np.max(neigh)
     cand = np.arange(vmin, vmax + 1)
@@ -143,9 +143,9 @@ def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta):
     energies = np.empty(m)
     for idx in range(m):
         v = cand[idx]
-        energies[idx] = lambda_r*(v - x_obs)**2 + beta*np.sum((neigh - v)**2)
+        energies[idx] = lambda_r*(v - x_obs)**2 + beta_prior*np.sum(np.minimum((neigh - v)**2, alpha))
     e0 = energies.min()
-    probs = np.exp(-(energies - e0))
+    probs = np.exp(-beta_t*(energies - e0))
     probs /= probs.sum()
     r = np.random.rand()
     cum = 0.0
@@ -156,7 +156,7 @@ def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta):
     return cand[-1]
 
 @numba.njit
-def _sample_neigh_potts(y_old, neigh, x_obs, lambda_r, beta):
+def _sample_neigh_potts(y_old, neigh, x_obs, lambda_r, beta_prior, beta_t):
     vmin = np.min(neigh)
     vmax = np.max(neigh)
     cand = np.arange(vmin, vmax + 1)
@@ -164,9 +164,9 @@ def _sample_neigh_potts(y_old, neigh, x_obs, lambda_r, beta):
     energies = np.empty(m)
     for idx in range(m):
         v = cand[idx]
-        energies[idx] = lambda_r*(v - x_obs)**2 + beta*np.sum((neigh != v).astype(np.float32))
+        energies[idx] = lambda_r*(v - x_obs)**2 + beta_prior*np.sum((neigh != v).astype(np.float32))
     e0 = energies.min()
-    probs = np.exp(-(energies - e0))
+    probs = np.exp(-beta_t*(energies - e0))
     probs /= probs.sum()
     r = np.random.rand()
     cum = 0.0
@@ -178,16 +178,17 @@ def _sample_neigh_potts(y_old, neigh, x_obs, lambda_r, beta):
 
 class GibbsSampler:
     def __init__(self, mrf, num_iter=1000, burn_in=200,
-                 verbose=False, betas=1.0, estimate_mode='mean', pior_type_for_optimal='quadratic'):
+                 verbose=False, betas_T=1.0, beta_prior=1.0, estimate_mode='mean', pior_type_for_optimal='quadratic'):
         self.mrf = mrf
         self.num_iter = num_iter
         self.burn_in = burn_in
         self.verbose = verbose
-        if type(betas) in (int, float):
-            betas = [betas] * self.num_iter
-        if len(betas) != self.num_iter:
+        if type(betas_T) in (int, float):
+            betas_T = [betas_T] * self.num_iter
+        if len(betas_T) != self.num_iter:
             raise ValueError("betas must be a scalar or a list of length C")
-        self.betas = betas
+        self.betas_T = betas_T
+        self.beta_prior = beta_prior
         self.estimate_mode = estimate_mode
         self.denoised_ = None
         self.last_sample_ = None
@@ -291,13 +292,12 @@ class GibbsSampler:
                     neigh = mrf_c._neighbors(Yc[...,None],i,j,0)
                     if self.pior_type_for_optimal == 'quadratic':
                         Yc[i,j] = _sample_neigh_quadratic(Yc[i,j], neigh, mrf_c.X[i,j,0],
-                                                mrf_c.lambda_r, self.betas[t-1])
+                                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
                     elif self.pior_type_for_optimal == 'potts':
                         Yc[i,j] = _sample_neigh_potts(Yc[i,j], neigh, mrf_c.X[i,j,0],
-                                                mrf_c.lambda_r, self.betas[t-1])
+                                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
                     else:
                         raise ValueError(f"Unknown prior type: {self.pior_type_for_optimal}")
-                
                 last_sample_ = Yc.copy()
                 if t > self.burn_in:
                     accum_c += Yc; count_c += 1
