@@ -134,6 +134,36 @@ class GridMRF:
             for j in range(self.W)
         )
 
+
+@numba.njit
+def _rho_lorentzian(z, sigma):
+    return np.log(1.0 + 0.5 * (z / sigma) ** 2)
+
+@numba.njit
+def _compute_lorentzian_loss_channel(Y_channel, X_channel, nbr_indices, sigma):
+    H, W = Y_channel.shape
+    total_loss = 0.0
+    
+    for i in range(H):
+        for j in range(W):
+            y_val = Y_channel[i, j]
+            x_obs = X_channel[i, j]
+            
+            total_loss += _rho_lorentzian(x_obs - y_val, sigma)
+            
+            nbr_count = 0
+            for di in [-1, 0, 1]:
+                for dj in [-1, 0, 1]:
+                    if di == 0 and dj == 0:
+                        continue
+                    ni, nj = i + di, j + dj
+                    if 0 <= ni < H and 0 <= nj < W:
+                        neighbor_val = Y_channel[ni, nj]
+                        total_loss += _rho_lorentzian(neighbor_val - y_val, sigma)
+                        nbr_count += 1
+    
+    return total_loss
+
 @numba.njit
 def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta_prior, beta_t, alpha=99999.0):
     vmin = np.min(neigh)
@@ -285,6 +315,9 @@ class GibbsSampler:
             Yc = Xc.astype(int)
             accum_c = np.zeros_like(Yc,float)
             count_c = 0
+            
+            channel_history = {'iter': [], 'loss': [], 'energy': [], 'lorentzian_loss': []}
+            
             for t in range(1,self.num_iter+1):
                 coords = [(i,j) for i in range(H) for j in range(W)]
                 if shuffle_pixels: np.random.shuffle(coords)
@@ -301,12 +334,11 @@ class GibbsSampler:
                 last_sample_ = Yc.copy()
                 if t > self.burn_in:
                     accum_c += Yc; count_c += 1
-                if self.verbose and t % 10 == 0:
-                    l = mrf_c.total_loss(Yc[...,None])
-                    e = mrf_c.total_energy(Yc[...,None])
-                    print(f"[Channel {c}][Iter {t}] Loss={l:.2f}, Energy={e:.2f}")
+                lorentzian_loss = _compute_lorentzian_loss_channel(Yc, Xc, None, 1)
+                
+                channel_history['loss'].append(lorentzian_loss)
             avg_c = np.round(accum_c/max(1,count_c)).astype(int)
-            return c, avg_c, last_sample_
+            return c, avg_c, last_sample_, channel_history
 
         if parallel_channels:
             with ThreadPoolExecutor(max_workers=C) as ex:
@@ -316,9 +348,14 @@ class GibbsSampler:
 
         den = np.zeros((H,W,C),int)
         last_sample = np.zeros((H,W,C),int)
-        for c ,avg_c, last_c in results:
+        self.history['loss'] = [0]* self.num_iter
+        for c ,avg_c, last_c, history_c in results:
             den[...,c] = avg_c
             last_sample[...,c] = last_c
+            for t in range(self.num_iter):
+                self.history['loss'][t] += history_c['loss'][t]
+                
+        self.history['loss'] = [l/C for l in self.history['loss']]
         self.denoised_ = den if C>1 else den[...,0]
         self.last_sample_ = last_sample if C>1 else last_sample[...,0]
         return self
