@@ -5,6 +5,7 @@ from skimage.io import imread, imsave
 from skimage.color import rgb2gray
 from skimage import img_as_ubyte
 
+
 def to_grayscale(img):
     if img.ndim == 3:
         if img.shape[2] == 4:
@@ -14,31 +15,46 @@ def to_grayscale(img):
     else:
         return img if img.dtype == np.uint8 else img_as_ubyte(img)
 
+
 def to_bichromatic(img, threshold=128):
     gray_uint8 = to_grayscale(img)
     binary = np.zeros_like(gray_uint8, dtype=np.uint8)
     binary[gray_uint8 >= threshold] = 255
     return binary
 
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Konwertuje obrazy do skali szarości lub binarnych (czarno-białe)."
+        description="Converts images to grayscale or to bichromatic maps."
     )
     parser.add_argument(
-        "--input_dir", "-i", type=str, required=True,
-        help="Katalog z obrazami wejściowymi (RGB lub grayscale)."
+        "--input_dir",
+        "-i",
+        type=str,
+        required=True,
+        help="Directory with input images (RGB or grayscale).",
     )
     parser.add_argument(
-        "--output_dir", "-o", type=str, required=True,
-        help="Katalog, do którego zostaną zapisane przetworzone obrazy."
+        "--output_dir",
+        "-o",
+        type=str,
+        required=True,
+        help="Directory, to which the images are saved.",
     )
     parser.add_argument(
-        "--mode", "-m", type=str, required=True, choices=["one_channel", "bichromatic"],
-        help='Tryb konwersji: "one_channel" → skala szarości, "bichromatic" → binarny.'
+        "--mode",
+        "-m",
+        type=str,
+        required=True,
+        choices=["one_channel", "bichromatic"],
+        help='Convertion mode: "one_channel" -> grayscale, "bichromatic" -> binary.',
     )
     parser.add_argument(
-        "--threshold", "-t", type=int, default=128,
-        help="Próg binarizacji (0–255); używany tylko w trybie bichromatic."
+        "--threshold",
+        "-t",
+        type=int,
+        default=128,
+        help="Binray threshold (0-255); used only in the bichromatic mode.",
     )
     args = parser.parse_args()
 
@@ -48,15 +64,17 @@ def main():
     threshold = args.threshold
 
     if mode == "bichromatic" and not (0 <= threshold <= 255):
-        raise ValueError("Threshold musi być w zakresie 0–255.")
+        raise ValueError("Threshold must be in range 0–255.")
 
     os.makedirs(output_dir, exist_ok=True)
 
     for fname in os.listdir(input_dir):
-        if not (fname.lower().endswith(".png")
-                or fname.lower().endswith(".jpg")
-                or fname.lower().endswith(".jpeg")
-                or fname.lower().endswith(".bmp")):
+        if not (
+            fname.lower().endswith(".png")
+            or fname.lower().endswith(".jpg")
+            or fname.lower().endswith(".jpeg")
+            or fname.lower().endswith(".bmp")
+        ):
             continue
 
         in_path = os.path.join(input_dir, fname)
@@ -70,7 +88,10 @@ def main():
         out_path = os.path.join(output_dir, fname)
         imsave(out_path, out_img)
 
-    print(f"Przetworzono obrazy z '{input_dir}' w trybie '{mode}', zapisano w '{output_dir}'.")
+    print(
+        f"Processed images from '{input_dir}' in mode '{mode}',saved to '{output_dir}'."
+    )
+
 
 if __name__ == "__main__":
     main()
