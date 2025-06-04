@@ -16,7 +16,7 @@ def mape_sa_quadratic(output_folder: Path, image_path: Path, num_iter: int, burn
         mrf, 
         num_iter=num_iter, 
         burn_in=burn_in, 
-        verbose=False, 
+        verbose=True, 
         estimate_mode='map', 
         pior_type_for_optimal='quadratic', 
         betas_T=betas_sa
@@ -25,6 +25,8 @@ def mape_sa_quadratic(output_folder: Path, image_path: Path, num_iter: int, burn
     denoised_mape_sa_quad = sampler_mape_sa_quad.estimate()
     output_file_mape_sa_quad = output_folder / f"{image_path.stem}_mape_sa_quadratic{image_path.suffix}"
     cv2.imwrite(str(output_file_mape_sa_quad), cv2.cvtColor(denoised_mape_sa_quad.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    loss = sampler_mape_sa_quad.history['loss']
+    np.save(output_folder / f"{image_path.stem}_mape_sa_quad_loss.npy", loss)
     return output_file_mape_sa_quad
     
 def mape_sa_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in: int, mrf: GridMRF, betas_sa: np.ndarray):
@@ -33,7 +35,7 @@ def mape_sa_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in:
         mrf, 
         num_iter=num_iter, 
         burn_in=burn_in, 
-        verbose=False, 
+        verbose=True, 
         estimate_mode='map', 
         pior_type_for_optimal='potts', 
         betas_T=betas_sa
@@ -42,6 +44,8 @@ def mape_sa_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in:
     denoised_mape_sa_potts = sampler_mape_sa_potts.estimate()
     output_file_mape_sa_potts = output_folder / f"{image_path.stem}_mape_sa_potts{image_path.suffix}"
     cv2.imwrite(str(output_file_mape_sa_potts), cv2.cvtColor(denoised_mape_sa_potts.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    loss = sampler_mape_sa_potts.history['loss']
+    np.save(output_folder / f"{image_path.stem}_mape_sa_potts_loss.npy", loss)
     return output_file_mape_sa_potts
     
 def mmse_quadratic(output_folder: Path, image_path: Path, num_iter: int, burn_in: int, mrf: GridMRF):
@@ -50,7 +54,7 @@ def mmse_quadratic(output_folder: Path, image_path: Path, num_iter: int, burn_in
         mrf, 
         num_iter=num_iter, 
         burn_in=burn_in, 
-        verbose=False, 
+        verbose=True, 
         estimate_mode='mean', 
         pior_type_for_optimal='quadratic'
     )
@@ -58,6 +62,8 @@ def mmse_quadratic(output_folder: Path, image_path: Path, num_iter: int, burn_in
     denoised_mmse_quad = sampler_mmse_quad.estimate()
     output_file_mmse_quad = output_folder / f"{image_path.stem}_mmse_quadratic{image_path.suffix}"
     cv2.imwrite(str(output_file_mmse_quad), cv2.cvtColor(denoised_mmse_quad.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    loss = sampler_mmse_quad.history['loss']
+    np.save(output_folder / f"{image_path.stem}_mmse_quad_loss.npy", loss)
     return output_file_mmse_quad
 
 def mmse_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in: int, mrf: GridMRF):
@@ -66,7 +72,7 @@ def mmse_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in: in
         mrf, 
         num_iter=num_iter, 
         burn_in=burn_in, 
-        verbose=False, 
+        verbose=True, 
         estimate_mode='mean', 
         pior_type_for_optimal='potts'
     )
@@ -74,6 +80,8 @@ def mmse_potts(output_folder: Path, image_path: Path, num_iter: int, burn_in: in
     denoised_mmse_potts = sampler_mmse_potts.estimate()
     output_file_mmse_potts = output_folder / f"{image_path.stem}_mmse_potts{image_path.suffix}"
     cv2.imwrite(str(output_file_mmse_potts), cv2.cvtColor(denoised_mmse_potts.astype(np.uint8), cv2.COLOR_RGB2BGR))
+    loss = sampler_mmse_potts.history['loss']
+    np.save(output_folder / f"{image_path.stem}_mmse_potts_loss.npy", loss)
     return output_file_mmse_potts
 
 def generate_and_save_denoised_images(image_path_str: str, output_folder_str: str):
@@ -94,12 +102,12 @@ def generate_and_save_denoised_images(image_path_str: str, output_folder_str: st
     mrf = GridMRF(noisy, loss, prior,
                   lambda_r=1, window_term=None, lambda_w=1)
 
-    num_iter = 80
+    num_iter = 200
     burn_in = 40
-    betas_sa = np.linspace(0.01, 1, num_iter)
+    power = np.linspace(-2, 2, num_iter)
+    betas_sa = 10 ** power
     
     
-    # Define the tasks to run in parallel
     tasks = [
         ("mape_sa_quad", mape_sa_quadratic, (output_folder, image_path, num_iter, burn_in, mrf, betas_sa)),
         ("mape_sa_potts", mape_sa_potts, (output_folder, image_path, num_iter, burn_in, mrf, betas_sa)),
@@ -109,15 +117,12 @@ def generate_and_save_denoised_images(image_path_str: str, output_folder_str: st
     
     results = {}
     
-    # Method 1: Using ProcessPoolExecutor (recommended)
     with ProcessPoolExecutor(max_workers=4) as executor:
-        # Submit all tasks
         future_to_task = {
             executor.submit(task_func, *task_args): task_name 
             for task_name, task_func, task_args in tasks
         }
         
-        # Collect results as they complete
         for future in as_completed(future_to_task):
             task_name = future_to_task[future]
             try:
@@ -129,22 +134,3 @@ def generate_and_save_denoised_images(image_path_str: str, output_folder_str: st
                 results[task_name] = None
     
     return results
-    
-    # # Configuration 1: MAPE = SA + Quadratic
-    # output_file_mape_sa_quad = mape_sa_quadratic(output_folder, image_path, num_iter, burn_in, mrf, betas_sa)
-
-    # # Configuration 2: MAPE = SA + Potts
-    # output_file_mape_sa_potts = mape_sa_potts(output_folder, image_path, num_iter, burn_in, mrf, betas_sa)
-
-    # # Configuration 3: MMSE - quadratic
-    # output_file_mmse_quad = mmse_quadratic(output_folder, image_path, num_iter, burn_in, mrf)
-
-    # # Configuration 4: MMSE - potts
-    # output_file_mmse_potts = mmse_potts(output_folder, image_path, num_iter, burn_in, mrf)
-    
-    # return {
-    #     "mape_sa_quad": output_file_mape_sa_quad,
-    #     "mape_sa_potts": output_file_mape_sa_potts,
-    #     "mmse_quad": output_file_mmse_quad,
-    #     "mmse_potts": output_file_mmse_potts
-    # }

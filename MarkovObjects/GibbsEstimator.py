@@ -137,6 +137,36 @@ class GridMRF:
             for j in range(self.W)
         )
 
+
+@numba.njit
+def _rho_lorentzian(z, sigma):
+    return np.log(1.0 + 0.5 * (z / sigma) ** 2)
+
+@numba.njit
+def _compute_lorentzian_loss_channel(Y_channel, X_channel, nbr_indices, sigma):
+    H, W = Y_channel.shape
+    total_loss = 0.0
+    
+    for i in range(H):
+        for j in range(W):
+            y_val = Y_channel[i, j]
+            x_obs = X_channel[i, j]
+            
+            total_loss += _rho_lorentzian(x_obs - y_val, sigma)
+            
+            nbr_count = 0
+            for di in [-1, 0, 1]:
+                for dj in [-1, 0, 1]:
+                    if di == 0 and dj == 0:
+                        continue
+                    ni, nj = i + di, j + dj
+                    if 0 <= ni < H and 0 <= nj < W:
+                        neighbor_val = Y_channel[ni, nj]
+                        total_loss += _rho_lorentzian(neighbor_val - y_val, sigma)
+                        nbr_count += 1
+    
+    return total_loss
+
 @numba.njit
 def _sample_neigh_quadratic(y_old, neigh, x_obs, lambda_r, beta_prior, beta_t, alpha=99999.0):
     vmin = np.min(neigh)
