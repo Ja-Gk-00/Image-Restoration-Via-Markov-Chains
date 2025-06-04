@@ -92,10 +92,14 @@ class WindowPatternTerm:
 class GridMRF:
     def __init__(self, X, loss_fn, prior_fn,
                  lambda_r=1.0, window_term=None, lambda_w=0.0,
-                 neighbor_offsets=None):
+                 neighbor_offsets=None, binary_map=False):
         if X.ndim == 2:
             X = X[..., None]
-        self.X = X.astype(float)
+        if binary_map:
+            X_thr = (X[..., 0] > 0.5).astype(float)
+            self.X = X_thr[..., None]
+        else:
+            self.X = X.astype(float)
         self.loss_fn = loss_fn
         self.prior_fn = prior_fn
         self.window_term = window_term
@@ -103,7 +107,6 @@ class GridMRF:
         self.lambda_w = lambda_w
         self.offsets = neighbor_offsets or [(-1,0),(1,0),(0,-1),(0,1)]
         self.H, self.W, self.C = self.X.shape
-        # precompute neighbor indices
         self._nbr_idx = [
             [[(i+di, j+dj) for di, dj in self.offsets
               if 0 <= i+di < self.H and 0 <= j+dj < self.W]
@@ -195,12 +198,17 @@ class GibbsSampler:
         self.history = {'iter': [], 'loss': [], 'energy': []}
         self.pior_type_for_optimal = pior_type_for_optimal
 
-    def fit(self, shuffle_pixels=False, parallel_channels=False):
+    def fit(self, shuffle_pixels=False, parallel_channels=False, binary_map=False):
     
         X = self.mrf.X
         if X.ndim == 2:
             X = X[..., None]
         H, W, C = X.shape
+
+        if binary_map:
+            candidates = np.array([0, 1], dtype=int)
+        else:
+            candidates = np.arange(256, dtype=int)
 
         if parallel_channels:
             def run_channel(c):
@@ -243,20 +251,22 @@ class GibbsSampler:
 
         else:
             Y = X.copy().astype(int)
-            accum = np.zeros_like(Y,float)
+            accum = np.zeros_like(Y, float)
             count = 0
-            for t in range(1,self.num_iter+1):
-                coords = [(c,i,j) for c in range(C) for i in range(H) for j in range(W)]
-                if shuffle_pixels: np.random.shuffle(coords)
-                for c,i,j in coords:
+            for t in range(1, self.num_iter+1):
+                coords = [(c, i, j) for c in range(C) for i in range(H) for j in range(W)]
+                if shuffle_pixels:
+                    np.random.shuffle(coords)
+                for c, i, j in coords:
+                    # use `candidates` instead of range(256)
                     Es = np.array([
-                        self.mrf.energy_pixel(v,i,j,c,Y)
-                        for v in range(256)
+                        self.mrf.energy_pixel(v, i, j, c, Y)
+                        for v in candidates
                     ])
                     logp = -Es; logp -= logp.max()
                     p = np.exp(logp); p /= p.sum()
-                    Y[i,j,c] = np.random.choice(256, p=p)
-                
+                    Y[i, j, c] = np.random.choice(candidates, p=p)
+
                 self.last_sample_ = Y.copy()
                 if t > self.burn_in:
                     accum += Y; count += 1
@@ -267,14 +277,19 @@ class GibbsSampler:
                     self.history['iter'].append(t)
                     self.history['loss'].append(loss_val)
                     self.history['energy'].append(energy_val)
-            avg = np.round(accum/max(1,count)).astype(int)
-            self.denoised_ = avg if C>1 else avg[...,0]
+
+            avg = np.round(accum / max(1, count)).astype(int)
+            self.denoised_ = avg if C > 1 else avg[..., 0]
             return self
 
-    def fit_optimised(self, shuffle_pixels=False, parallel_channels=False):
+    def fit_optimised(self, shuffle_pixels=False, parallel_channels=False, binary_map=False):
         
         X = self.mrf.X
-        if X.ndim == 2: X = X[..., None]
+        if X.ndim == 2:
+            X = X[..., None]
+        # If binary_map, treat as single-channel
+        if binary_map:
+            X = X[..., :1]
         H, W, C = X.shape
 
         def worker(c):
@@ -282,46 +297,85 @@ class GibbsSampler:
             mrf_c = GridMRF(Xc, self.mrf.loss_fn, self.mrf.prior_fn,
                             self.mrf.lambda_r, None, self.mrf.lambda_w,
                             self.mrf.offsets)
-            Yc = Xc.astype(int)
-            accum_c = np.zeros_like(Yc,float)
+            # initialize Yc: if binary_map, project observed values to {0,1}
+            if binary_map:
+                Yc = (np.random.rand(H,W) > 0.5).astype(np.int32)
+            else:
+                Yc = Xc.astype(int)
+            accum_c = np.zeros_like(Yc, float)
             count_c = 0
-            for t in range(1,self.num_iter+1):
+            for t in range(1, self.num_iter+1):
                 coords = [(i,j) for i in range(H) for j in range(W)]
-                if shuffle_pixels: np.random.shuffle(coords)
-                for i,j in coords:
-                    neigh = mrf_c._neighbors(Yc[...,None],i,j,0)
-                    if self.pior_type_for_optimal == 'quadratic':
-                        Yc[i,j] = _sample_neigh_quadratic(Yc[i,j], neigh, mrf_c.X[i,j,0],
-                                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
-                    elif self.pior_type_for_optimal == 'potts':
-                        Yc[i,j] = _sample_neigh_potts(Yc[i,j], neigh, mrf_c.X[i,j,0],
-                                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
+                if shuffle_pixels:
+                    np.random.shuffle(coords)
+                for i, j in coords:
+                    neigh = mrf_c._neighbors(Yc[..., None], i, j, 0)
+                    x_obs = mrf_c.X[i, j, 0]
+                    if binary_map:
+                        cand = np.array([0, 1], dtype=np.int32)
+                        m = 2
+                        energies = np.empty(m, dtype=np.float64)
+                        for idx in range(m):
+                            v = cand[idx]
+                            if self.pior_type_for_optimal == 'quadratic':
+                                sq_diffs = (neigh - v) ** 2
+                                truncated = np.minimum(sq_diffs, self.beta_prior)
+                                energies[idx] = mrf_c.lambda_r * (v - x_obs) ** 2 + self.beta_prior * np.sum(truncated)
+                            elif self.pior_type_for_optimal == 'potts':
+                                energies[idx] = mrf_c.lambda_r * (v - x_obs) ** 2 + self.beta_prior * np.sum(neigh != v)
+                            else:
+                                raise ValueError(f"Unknown prior type: {self.pior_type_for_optimal}")
+                        e0 = energies.min()
+                        probs = np.exp(-self.betas_T[t-1] * (energies - e0))
+                        probs /= probs.sum()
+                        r = np.random.rand()
+                        cum = 0.0
+                        for idx in range(m):
+                            cum += probs[idx]
+                            if r < cum:
+                                Yc[i, j] = cand[idx]
+                                break
                     else:
-                        raise ValueError(f"Unknown prior type: {self.pior_type_for_optimal}")
+                        if self.pior_type_for_optimal == 'quadratic':
+                            Yc[i, j] = _sample_neigh_quadratic(
+                                Yc[i, j], neigh, Xc[i, j],
+                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
+                        elif self.pior_type_for_optimal == 'potts':
+                            Yc[i, j] = _sample_neigh_potts(
+                                Yc[i, j], neigh, Xc[i, j],
+                                mrf_c.lambda_r, self.beta_prior, self.betas_T[t-1])
+                        else:
+                            raise ValueError(f"Unknown prior type: {self.pior_type_for_optimal}")
                 last_sample_ = Yc.copy()
                 if t > self.burn_in:
-                    accum_c += Yc; count_c += 1
+                    accum_c += Yc
+                    count_c += 1
                 if self.verbose and t % 10 == 0:
-                    l = mrf_c.total_loss(Yc[...,None])
-                    e = mrf_c.total_energy(Yc[...,None])
+                    l = mrf_c.total_loss(Yc[..., None])
+                    e = mrf_c.total_energy(Yc[..., None])
                     print(f"[Channel {c}][Iter {t}] Loss={l:.2f}, Energy={e:.2f}")
-            avg_c = np.round(accum_c/max(1,count_c)).astype(int)
+            avg_c = np.round(accum_c / max(1, count_c)).astype(int)
             return c, avg_c, last_sample_
 
-        if parallel_channels:
-            with ThreadPoolExecutor(max_workers=C) as ex:
-                results = [f.result() for f in [ex.submit(worker,c) for c in range(C)]]
+        # Only one channel if binary_map
+        if C == 1 or binary_map:
+            results = [worker(0)]
         else:
-            results = [worker(c) for c in range(C)]
+            if parallel_channels:
+                with ThreadPoolExecutor(max_workers=C) as ex:
+                    results = [f.result() for f in [ex.submit(worker, c) for c in range(C)]]
+            else:
+                results = [worker(c) for c in range(C)]
 
-        den = np.zeros((H,W,C),int)
-        last_sample = np.zeros((H,W,C),int)
-        for c ,avg_c, last_c in results:
-            den[...,c] = avg_c
-            last_sample[...,c] = last_c
-        self.denoised_ = den if C>1 else den[...,0]
-        self.last_sample_ = last_sample if C>1 else last_sample[...,0]
+        den = np.zeros((H, W, C), int)
+        last_sample = np.zeros((H, W, C), int)
+        for c, avg_c, last_c in results:
+            den[..., c] = avg_c
+            last_sample[..., c] = last_c
+        self.denoised_ = den if C > 1 else den[..., 0]
+        self.last_sample_ = last_sample if C > 1 else last_sample[..., 0]
         return self
+
 
     def estimate(self):
         if self.denoised_ is None:
