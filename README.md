@@ -51,7 +51,7 @@ To run the script one should run the following command from the main directory o
 example:  
 ```python .\Scripts\run_all.py .\Data\Raw\examples\ .\Data\Transformed\examples\ .\Data\outptut\ ```.  
 
-Where each argument represents:
+Where each argument represents:  
     1. */path/to/clean/images* - a path to clean images to which noised ones are available (should there be no clean images, input path to empty directory).  
     2. */path/to/noisy/images* - a path to directory that contains noised images.  
     3. */path/to/output* - where to output restored images and statistics about the restoration process.  
