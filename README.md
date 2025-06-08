@@ -63,7 +63,7 @@ Be mindfull that for large images, the process might take some time, even tough 
 
 
 ### Contributors
-The module and the presentation with theoretical background have been developed by two authors:
+The module and the presentation with theoretical background have been developed by two authors:  
     1. [github.com/Ja-Gk-00](https://github.com/Ja-Gk-00)  
     2. [github.com/trebacz626](https://github.com/trebacz626)  
 
