@@ -3,12 +3,12 @@
 ![Image restoration with Bayesian Methods](denoising.png "Denoising with MCMC")
 
 The repository consists of Markov Chains Monte Carlo (MCMC) methods to restore noisy or old photos.  
-The two main methods used for restoration consist of applying:
-    - Simulated Annealing
-    - Gibbs Probing
-For each there are two loss functions implemented:
-    - Cut Quadratic loss
-    - Pott's model
+The two main methods used for restoration consist of applying:  
+    - Simulated Annealing  
+    - Gibbs Probing  
+For each there are two loss functions implemented:  
+    - Cut Quadratic loss  
+    - Pott's model  
 
 The entirety of the project's results and functionalities has been explored in the presentation (**NOTE** The presentation is fully in polish) linked in the project [Here](Presentation.pdf).  
 
@@ -27,14 +27,14 @@ Simulated annealing is a probabilistic meta-heuristic for global optimisation in
     - Begins with a high “temperature” that allows exploration of the solution space, including moves to worse solutions, to avoid early trapping in local minima.
     - The temperature is decreased according to a predetermined plan, gradually reducing randomness and focusing the search on promising regions.  
     - At each step, a candidate move is accepted with a probability that depends on the change in objective value and the current temperature, permitting uphill moves early on and favoring downhill moves as temperature falls.  
-    - Theoretically guarantees convergence to a global optimum with an infinitely slow cooling schedule; in practice, a suitably chosen schedule yields high-quality solutions in finite time.
+    - Theoretically guarantees convergence to a global optimum with an infinitely slow cooling schedule; in practice, a suitably chosen schedule yields high-quality solutions in finite time.  
 
 
 ## Installation
 Follow the steps listed below to install the required packages and run denoising/restoration of the photos.  
 
 ### Setting up virtual environment + installing requirements
-The user should set up a venv to install the requirements and run the script: 
+The user should set up a venv to install the requirements and run the script:  
     1. ``` python -m venv /path/to/virtual/env```,  
     2. ``` venv/bin/activate ```,  
     3. Then install requirements ```pip install -r requirements.txt ```
@@ -47,14 +47,14 @@ There is one main script which 4 prepared methods of denoising i.e:
     4. MMSE + Potts.  
 
 To run the script one should run the following command from the main directory of the project:  
-```\venv\bin\python.exe Scripts/run_all.py /path/to/clean/images /path/to/noisy/images /path/to/output ```.
+```\venv\bin\python.exe Scripts/run_all.py /path/to/clean/images /path/to/noisy/images /path/to/output ```.  
 example:  
-```python .\Scripts\run_all.py .\Data\Raw\examples\ .\Data\Transformed\examples\ .\Data\outptut\ ```.
+```python .\Scripts\run_all.py .\Data\Raw\examples\ .\Data\Transformed\examples\ .\Data\outptut\ ```.  
 
 Where each argument represents:
-    1. */path/to/clean/images* - a path to clean images to which noised ones are available (should there be no clean images, input path to empty directory).
-    2. */path/to/noisy/images* - a path to directory that contains noised images.
-    3. */path/to/output* - where to output restored images and statistics about the restoration process.
+    1. */path/to/clean/images* - a path to clean images to which noised ones are available (should there be no clean images, input path to empty directory).  
+    2. */path/to/noisy/images* - a path to directory that contains noised images.  
+    3. */path/to/output* - where to output restored images and statistics about the restoration process.  
 
 The clean images are only necessary to perform an evaluation of the denoising process that is later saved into a *.csv* file with metrics (e.g L1 and L2 measure).  
 If they are not available, then the statistics will be generated as *NAN*.  
